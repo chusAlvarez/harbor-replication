@@ -19,3 +19,4 @@ Currently only the replication of repositories, images and tags are replicated, 
 ```
 $ go run cmd/main.go
 ```
+[harbor]: https://github.com/goharbor/harbor
