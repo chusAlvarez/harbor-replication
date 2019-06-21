@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -71,9 +72,16 @@ func postProject(project schema.Project, logger log.Logger) error {
 		return err
 	}
 
+	if resp.StatusCode == 409 {
+		logger.Debugf("Project %s already present", projectJSON)
+		return nil
+	}
+
 	if resp.StatusCode != 201 {
 		return fmt.Errorf("error creating project %s status received %d", projectJSON, resp.StatusCode)
 	}
+
+	logger.Debugf("Added project:", project.Name)
 
 	return nil
 }
@@ -126,7 +134,8 @@ func getTags(repositoryName string, logger log.Logger) ([]schema.Tag, error) {
 	err = json.NewDecoder(resp.Body).Decode(&tags)
 
 	if err != nil {
-		return nil, err
+		body, _ := ioutil.ReadAll(resp.Body)
+		return nil, fmt.Errorf("error decoding %s %s %s", harborURLFrom+"/repositories/"+repositoryName+"/tags", err, string(body))
 	}
 
 	return tags, nil
@@ -150,11 +159,33 @@ func getImages(projectName string, ProjectID int32, logger log.Logger) ([]string
 		}
 
 		for _, tag := range tags {
+			err = ensureImage(repository.Name, tag.Name, logger)
+			if err == nil {
+				logger.Debugf("image %s already present", repository.Name+":"+tag.Name)
+				continue
+			}
+
 			images = append(images, repository.Name+":"+tag.Name)
 		}
 	}
 
 	return images, nil
+}
+func ensureImage(repository string, tag string, logger log.Logger) error {
+	toConnect := http.Client{}
+	req, err := http.NewRequest(http.MethodGet, harborURLTo+"/repositories/"+repository+"/tags/"+tag, nil)
+	resp, err := toConnect.Do(req)
+
+	if err != nil {
+		logger.Debugf("error ensuring image %s", err)
+		return err
+	}
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("error ensuring image  %d", resp.StatusCode)
+	}
+
+	return nil
 }
 func copyImage(image string, logger log.Logger) error {
 
@@ -208,8 +239,8 @@ func copyImage(image string, logger log.Logger) error {
 	return nil
 }
 
-func loginTo() error {
-	cmd := exec.Command("/usr/bin/docker", "login", "-u", harborUserTo, "-p", harborPasswordTo, harborTo)
+func loginDocker(user string, password string, server string) error {
+	cmd := exec.Command("/usr/bin/docker", "login", "-u", user, "-p", password, server)
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
@@ -227,6 +258,9 @@ func main() {
 	logger := log.Base()
 	logger.Set("debug")
 
+	loginDocker(harborUserFrom, harborPasswordFrom, harborFrom)
+	loginDocker(harborUserTo, harborPasswordTo, harborTo)
+
 	projects, err := getProjects()
 
 	if err != nil {
@@ -235,18 +269,14 @@ func main() {
 	}
 
 	for _, project := range projects {
-
 		err = postProject(project, logger)
 
 		if err != nil {
 			logger.Warn(err)
-		} else {
-			logger.Debugf("Added project:", project.Name)
 		}
 
 		if project.RepoCount > 0 {
 			//Have images to copy
-			err = loginTo()
 
 			if err != nil {
 				logger.Errorf("Cant log: %s", err)

@@ -17,8 +17,12 @@ type Tag struct {
 
 type TagSignature struct {
 }
+
+type TagConfigLabels struct {
+}
+
 type TagConfig struct {
-	Labels []string `json:"labels,omitempty"`
+	Labels TagConfigLabels `json:"labels,omitempty"`
 }
 
 type TagScanOverview struct {
